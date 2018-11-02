@@ -6,8 +6,8 @@
 #include <fcntl.h>
 #include <sys/types.h>
 
-int BLOCK_SIZE = 1024;
-int INODE_SIZE = 32;
+const int BLOCK_SIZE = 1024;
+const int INODE_SIZE = 32;
 
 //***************************************************************************
 // UNIX V6 FILE SYSTEM STRUCTURES
@@ -74,7 +74,7 @@ typedef struct {
 
 
 int InitFS(int fileDesc, long nBlocks, int nInodes);
-void AddFreeBlock(long blockNumber, int fileDesc);
+void AddFreeBlock(int fileDesc, long blockNumber);
 
 
 //***************************************************************************
@@ -132,6 +132,14 @@ int InitFS(int fileDesc, long nBlocks, int nInodes)
     int firstFreeBlock = 2 + nInodeBlocks + 1; // +1 as bootblock is 0th
     int nextFreeBlock;
 
+    // TEST ONLY: fill blocks with 0s to confirm size
+    char charbuffer[BLOCK_SIZE];
+    memset(charbuffer, 0, BLOCK_SIZE);
+    for (nextFreeBlock = firstFreeBlock; nextFreeBlock < nBlocks; nextFreeBlock++ ) {
+        lseek(fileDesc, nextFreeBlock * BLOCK_SIZE, SEEK_SET);
+        write(fileDesc, charbuffer, BLOCK_SIZE);
+    }
+
     // Initialize free blocks
     for (nextFreeBlock = firstFreeBlock; nextFreeBlock < nBlocks; nextFreeBlock++ ){
         //printf("\nCall AddFreeBlock for block: %i",nextFreeBlock); // TO DEBUG
@@ -139,12 +147,11 @@ int InitFS(int fileDesc, long nBlocks, int nInodes)
     }
 
     // ROOT DIRECTORY INODE
-    //***************************************************************************
     INode inode; // inode object
     INodeFlags flags; // flags to manage file type
     FileName fileName; // file structure
 
-    // Need to Initialize only first i-node and root directory file will point to it
+    // Update only first i-node as root node, remainig to be done in Project2
     INode rootInode;
     rootInode.flags = 0; //Initialize
     rootInode.flags |=1 <<15; //Set first bit to 1 - i-node is allocated
@@ -162,7 +169,7 @@ int InitFS(int fileDesc, long nBlocks, int nInodes)
     for (int i = 1; i < 2; i++)
         rootInode.modtime[i]=(short) time(0);
 
-    // Create root directory file and initialize with "." and ".." Set offset to 1st i-node
+    // Initialize with "." and ".." Set offset to 1st i-node
     fileName.inodeOffset = 1;
     strcpy(fileName.fileName, ".");
     int allocBlock = firstFreeBlock-1;      // Allocate block for file_directory
@@ -183,7 +190,7 @@ int InitFS(int fileDesc, long nBlocks, int nInodes)
 //***************************************************************************
 // AddFreeBlock: Adds a free block and update the super-block accordingly
 //***************************************************************************
-void AddFreeBlock(long blockNumber, int fileDesc)
+void AddFreeBlock(int fileDesc, long blockNumber)
 {
     SuperBlock superBlock;
     FreeBlock copyToBlock;
@@ -221,8 +228,8 @@ int main()
 {
     printf("\n## WELCOME TO UNIX V6 FILE SYSTEM ##\n");
     printf("\n## PLEASE ENTER ONE OF THE FOLLOWING COMMAND ##\n");
-    printf("\n\t ~InitFS - To initialize the file system \n");
-    printf("\t\t ~Example :: InitFS /home/venky/behappy.txt 5000 300 \n");
+    printf("\n\t ~initfs - To initialize the file system \n");
+    printf("\t\t ~Example :: initfs /home/venky/behappy.txt 5000 300 \n");
     printf("\n\t ~q - To quit the program\n");
 
     int cmdStatus; // status of file system creation
@@ -249,7 +256,7 @@ int main()
         pCommand = strtok (userCmd, " ");
 
         // if pCommand is InitFS initilize file system
-        if (strcmp(pCommand, "InitFS")==0) {
+        if (strcmp(pCommand, "initfs")==0) {
             char * pFilePath = strtok (NULL, " ");
             char * pnBlocks = strtok (NULL, " ");
             char * pnInode = strtok (NULL, " ");
