@@ -1,11 +1,6 @@
 # Unix V6 File System (Extended)
 OPERATING SYSTEM PROJECT 2 PART A- Create a Modified Version of the UNIX V6 File System
-===========================================================================================================
-Team Members:
-Safal Tyagi skt180001
-Praneeth Varma vxk180026
-Pallavi Pandey pxp170009
-===========================================================================================================
+
 Redesign Summary:
 1. redesigned the inode structure where maximum allowed size is 32 bytes.
 2. redesigned the superblock structure where maximum allowed size is 1024 bytes and the superblock used is 1018 bytes.
@@ -14,7 +9,7 @@ Redesign Summary:
 5. Maximum file size allowed is 4GB
 6. Size of the inode is 32bytes.
 7. inode in each block is 32.
-===========================================================================================================
+
 Methods Used:
 1. main
  INPUT:
@@ -27,8 +22,9 @@ d. If blocks requested is less than 4GB, it initializes the file system.
 e. If the command entered is quit, it exits the program.
 f. If the user enters any other command, it throws an error.
 g. Prints the total number of commands executed.
-===========================================================================================================
-2. InitFS(FILE* fileSystem, long nBlocks, int nInodes)
+
+
+2. InitFS(int fileDesc, long nBlocks, int nInodes)
  INPUT:
 a. Path of the file that has to be created.
 b. Number of blocks in the disk.
@@ -46,7 +42,7 @@ i. Call the add free block function to add free blocks to the next free data blo
 j. Initializes the flag by telling that the file is allocated and it is of the type directory.
 k. Creates a root directory and sets offset to first i-node.
 l. Points the first i-node to file directory.
-===========================================================================================================
+
 3. AddFreeBlock(long BlockNumber, FILE* fileSystem)
 
  INPUT:
