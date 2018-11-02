@@ -1,13 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 #include <time.h>
+#include <fcntl.h>
+#include <sys/types.h>
 
 int BLOCK_SIZE = 1024;
 int INODE_SIZE = 32;
 
 //***************************************************************************
-// UNIX V6 FILE SYSTEM STRUCTURES 
+// UNIX V6 FILE SYSTEM STRUCTURES
 //***************************************************************************
 // SUPER-BLOCK
 //***************************************************************************
@@ -46,14 +49,14 @@ typedef struct{
     unsigned short fileType; // a directory
     unsigned short largeFile; // 13th bit: a large file
     // other flags : NOT USED
-    // 12th: user id | 11th: group id | 10th: none 
+    // 12th: user id | 11th: group id | 10th: none
     // 9th: read (owner) | 8th: write (owner) | 8th: exec (owner)
     // 6th: read (group) | 5th: write (group) | 4th: exec (group)
     // 3rd: read (others) | 2nd: write (others) | 1st: exec (others)
 } INodeFlags;
 
 //***************************************************************************
-// OTHER HELPER STRUCTURES 
+// OTHER HELPER STRUCTURES
 //***************************************************************************
 // FREE BLOCK
 //***************************************************************************
@@ -70,17 +73,21 @@ typedef struct {
 } FileName;
 
 
+int InitFS(int fileDesc, long nBlocks, int nInodes);
+void AddFreeBlock(long blockNumber, int fileDesc);
+
+
 //***************************************************************************
-// InitFS: INITIALIZES THE FILE SYSTEM 
+// InitFS: INITIALIZES THE FILE SYSTEM
 //***************************************************************************
 /*
-* @nBlocks: 
-* @nInodes: 
-* @fileDesc : 
+* @fileDesc: file descriptor
+* @nBlocks: total blocks of file system
+* @nInodes: number of inodes
 */
 int InitFS(int fileDesc, long nBlocks, int nInodes)
 {
-	char buffer[BLOCK_SIZE]; // char buffer to read/write the blocks to/from file
+    char buffer[BLOCK_SIZE]; // char buffer to read/write the blocks to/from file
     long writtenBytes=0, i = 0;
 
     // BOOT LOADER (FIRST) BLOCK
@@ -113,66 +120,64 @@ int InitFS(int fileDesc, long nBlocks, int nInodes)
     superBlock.ilock = "ilock"; // dummy
     superBlock.fmod = "fmod"; // dummy
 
-    superBlock.time[0] = (short) time(0); // current time
-    superBlock.time[1] = 0; //empty 
+    superBlock.time[0] = (unsigned short) time(0); // current time
+    superBlock.time[1] = 0; //empty
 
     // Write super block to file system
-    int fileDesc = 0;
     lseek(fileDesc, BLOCK_SIZE, SEEK_SET);
     write(fileDesc, &superBlock, sizeof(superBlock)); // Note: sizeof(superBlock) <= BLOCK_SIZE
 
     // SUPER-BLOCK: FREE LIST
     // first free block = bootBlock + superBlock + inodeBlocks
-	int firstFreeBlock = 2 + nInodeBlocks + 1; // +1 as bootblock is 0th
-	int nextFreeBlock;
+    int firstFreeBlock = 2 + nInodeBlocks + 1; // +1 as bootblock is 0th
+    int nextFreeBlock;
 
-	// Initialize free blocks
-	for (nextFreeBlock = firstFreeBlock; nextFreeBlock < nBlocks; nextFreeBlock++ ){ 
+    // Initialize free blocks
+    for (nextFreeBlock = firstFreeBlock; nextFreeBlock < nBlocks; nextFreeBlock++ ){
         //printf("\nCall AddFreeBlock for block: %i",nextFreeBlock); // TO DEBUG
         AddFreeBlock(fileDesc, nextFreeBlock);
-	}
+    }
 
     // ROOT DIRECTORY INODE
     //***************************************************************************
-    INode inode; // inode object 
-	INodeFlags flags; // flags to manage file type
-	FileName fileName; // file structure
+    INode inode; // inode object
+    INodeFlags flags; // flags to manage file type
+    FileName fileName; // file structure
 
-	// Need to Initialize only first i-node and root directory file will point to it
-	INode rootInode;
-	rootInode.flags = 0; //Initialize
-	rootInode.flags |=1 <<15; //Set first bit to 1 - i-node is allocated
-	rootInode.flags |=1 <<14; // Set 2-3 bits to 10 - i-node is directory
-	rootInode.nlinks = 2;
-	rootInode.uid=0;
-	rootInode.gid=0;
-	rootInode.size0=0;
-	rootInode.size1=16*2; //File size is two records each is 16 bytes.
-	rootInode.addr[0]=firstFreeBlock - 1;
+    // Need to Initialize only first i-node and root directory file will point to it
+    INode rootInode;
+    rootInode.flags = 0; //Initialize
+    rootInode.flags |=1 <<15; //Set first bit to 1 - i-node is allocated
+    rootInode.flags |=1 <<14; // Set 2-3 bits to 10 - i-node is directory
+    rootInode.nlinks = 2;
+    rootInode.uid=0;
+    rootInode.gid=0;
+    rootInode.size0=0;
+    rootInode.size1=16*2; //File size is two records each is 16 bytes.
+    rootInode.addr[0]=firstFreeBlock - 1;
     for (int i = 1; i < 8; i++)
         rootInode.addr[i] = 0;
-	for (int i = 1; i < 2; i++)
-	    rootInode.actime[i]=(short) time(0);
     for (int i = 1; i < 2; i++)
-	    rootInode.modtime[i]=(short) time(0);
+        rootInode.actime[i]=(short) time(0);
+    for (int i = 1; i < 2; i++)
+        rootInode.modtime[i]=(short) time(0);
 
-	// Create root directory file and initialize with "." and ".." Set offset to 1st i-node
-	fileName.inodeOffset = 1;
-	strcpy(fileName.fileName, ".");
-	int allocBlock = firstFreeBlock-1;      // Allocate block for file_directory
-	lseek(fileDesc, allocBlock*BLOCK_SIZE, SEEK_SET); //move to the beginning of first available block
-	write(fileDesc, &fileName,sizeof(fileName));
-	strcpy(fileName.fileName, "..");
-	write(fileDesc, &fileName,sizeof(fileName));
+    // Create root directory file and initialize with "." and ".." Set offset to 1st i-node
+    fileName.inodeOffset = 1;
+    strcpy(fileName.fileName, ".");
+    int allocBlock = firstFreeBlock-1;      // Allocate block for file_directory
+    lseek(fileDesc, allocBlock*BLOCK_SIZE, SEEK_SET); //move to the beginning of first available block
+    write(fileDesc, &fileName,sizeof(fileName));
+    strcpy(fileName.fileName, "..");
+    write(fileDesc, &fileName,sizeof(fileName));
 
-	//Point first inode to file directory
-	printf("\nDirectory in the block %i", allocBlock);
-	rootInode.addr[0] = allocBlock;
+    //Point first inode to file directory
+    printf("\nDirectory in the block %i", allocBlock);
+    rootInode.addr[0] = allocBlock;
     lseek(fileDesc, BLOCK_SIZE*2, SEEK_SET); //move to the beginning of inode with INodeNumber
-	write(fileDesc, &rootInode,sizeof(rootInode));
-	}
+    write(fileDesc, &rootInode,sizeof(rootInode));
 
-	return 0;
+    return 0;
 }
 
 //***************************************************************************
@@ -180,16 +185,16 @@ int InitFS(int fileDesc, long nBlocks, int nInodes)
 //***************************************************************************
 void AddFreeBlock(long blockNumber, int fileDesc)
 {
-	SuperBlock superBlock;
-	FreeBlock copyToBlock;
+    SuperBlock superBlock;
+    FreeBlock copyToBlock;
 
     // read and update existing superblock
-	lseek(fileDesc, BLOCK_SIZE, SEEK_SET);
-	read(fileDesc, &superBlock, sizeof(superBlock));
+    lseek(fileDesc, BLOCK_SIZE, SEEK_SET);
+    read(fileDesc, &superBlock, sizeof(superBlock));
 
-    // if free array is full 
+    // if free array is full
     // copy content of superBlock to new block and point to it
-	if (superBlock.nfree == 250){ 
+    if (superBlock.nfree == 250){
         //printf("\nCopy free list to block %i",blockNumber);
         copyToBlock.nfree=250;
         for (int i = 0; i < 250; i++)
@@ -198,15 +203,15 @@ void AddFreeBlock(long blockNumber, int fileDesc)
         write(fileDesc, &copyToBlock,sizeof(copyToBlock));
         superBlock.nfree = 1;
         superBlock.free[0] = blockNumber;
-	}
-	else { // free array is NOT full 
-		superBlock.free[superBlock.nfree] = blockNumber;
-		superBlock.nfree++;
-	}
+    }
+    else { // free array is NOT full
+        superBlock.free[superBlock.nfree] = blockNumber;
+        superBlock.nfree++;
+    }
 
     // write updated superblock to filesystem
-	lseek(fileDesc, BLOCK_SIZE, SEEK_SET);
-	write(fileDesc, &superBlock, sizeof(superBlock));
+    lseek(fileDesc, BLOCK_SIZE, SEEK_SET);
+    write(fileDesc, &superBlock, sizeof(superBlock));
 }
 
 //***************************************************************************
@@ -216,23 +221,23 @@ int main()
 {
     printf("\n## WELCOME TO UNIX V6 FILE SYSTEM ##\n");
     printf("\n## PLEASE ENTER ONE OF THE FOLLOWING COMMAND ##\n");
-	printf("\n\t ~InitFS - To initialize the file system \n");
-	printf("\t\t ~Example :: InitFS /home/venky/behappy.txt 5000 300 \n");
-	printf("\n\t ~q - To quit the program\n");
+    printf("\n\t ~InitFS - To initialize the file system \n");
+    printf("\t\t ~Example :: InitFS /home/venky/behappy.txt 5000 300 \n");
+    printf("\n\t ~q - To quit the program\n");
 
     int cmdStatus; // status of file system creation
     int fileDesc = 0; // filesystem descriptor
     int cmdCount = 0; // cmdCount of commands
 
-     // Accept userCmd, max lenght of userCmd : 256 characters
+    // Accept userCmd, max lenght of userCmd : 256 characters
     char userCmd[256];
 
     while(1) { // wait for user input: 'q' command
         printf("Enter Command : ");
         cmdCount++;
 
-		// get userCmd from user line-by-line
-		scanf(" %[^\n]s", userCmd);
+        // get userCmd from user line-by-line
+        scanf(" %[^\n]s", userCmd);
 
         // if user press q, exit saving changes
         if (strcmp(userCmd, "q")==0){
@@ -242,7 +247,7 @@ int main()
 
         char * pCommand; // function to execute
         pCommand = strtok (userCmd, " ");
-        
+
         // if pCommand is InitFS initilize file system
         if (strcmp(pCommand, "InitFS")==0) {
             char * pFilePath = strtok (NULL, " ");
@@ -260,16 +265,16 @@ int main()
 
             // check if the file exists
             if( access( pFilePath, F_OK ) != -1 ) { // if exists
-                fileDesc = open(path, O_RDWR);
+                fileDesc = open(pFilePath, O_RDWR);
                 if (fileDesc == -1) {
                     printf("\nERROR: Not sufficient file descriptors.\n");
                     exit(0);
                 }
                 else
-                printf("\nFile opens %s \n",pFilePath);
+                    printf("\nFile opens %s \n",pFilePath);
             }
             else { // file doesn't exist
-                fileDesc = open(path, O_RDWR | O_CREAT);
+                fileDesc = open(pFilePath, O_RDWR | O_CREAT);
                 if (fileDesc == -1) {
                     printf("\nERROR: Not sufficient file descriptors.\n");
                     exit(0);
@@ -284,11 +289,10 @@ int main()
                 printf("\nFile system initialization SUCCESSFUL!\n");
             else
                 printf("\nFile system initialization FAILED!\n");
-            }
         }
-      else
-      	printf("FAILED: Invalid Command. Accepted commands: InitFS and q.\n");
-
+        else
+            printf("FAILED: Invalid Command. Accepted commands: InitFS and q.\n");
     }
 }
+
 
