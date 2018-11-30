@@ -506,7 +506,7 @@ int cpin(const char* from_filename,const char* to_filename,FILE* fileDesc){
 
 int Rm(const char* filename,FILE* fileDesc){
 	printf("\nInside Rm, remove file %s",filename);
-	int file_node_num, file_size, block_number_order, next_block_number;
+	int file_node_num, file_size, block_number_order, next_block_number,i;
 	INode file_inode;
 	unsigned char bit_14; //Plain file or Directory bit
 	file_node_num = get_inode_by_file_name(filename,fileDesc);
@@ -535,6 +535,8 @@ int Rm(const char* filename,FILE* fileDesc){
 		}
 	}
 	file_inode.flags=0; //Initialize inode flag and make it unallocated
+	for (i = 0;i<23;i++)
+		file_inode.addr[i] = 0;
 	write_inode(file_node_num, file_inode, fileDesc);
 	remove_file_from_directory(file_node_num, fileDesc);
 	fflush(fileDesc);
@@ -809,6 +811,7 @@ int cpout(const char* from_filename,const char* to_filename,FILE* fileDesc){
 	write_to_file = fopen(to_filename,"w");
 	block_number_order=0;
 	file_size = get_inode_file_size(file_node_num, fileDesc);
+
 	printf("\nFile size %i",file_size);
 	int number_of_bytes_last_block = file_size%block_size;
 	unsigned char last_buffer[number_of_bytes_last_block];
@@ -823,6 +826,9 @@ int cpout(const char* from_filename,const char* to_filename,FILE* fileDesc){
 			next_block_number = get_block_for_big_file(file_node_num,block_number_order,fileDesc);
 		else
 			next_block_number = get_block_for_small_file(file_node_num,block_number_order,fileDesc);
+
+		if(next_block_number == 0)
+			return 0;
 
 		fseek(fileDesc, next_block_number*block_size, SEEK_SET);
 		if ((block_number_order <(number_of_blocks-1)) || (number_of_bytes_last_block ==0)){
@@ -908,8 +914,13 @@ int get_inode_by_file_name(const char* filename,FILE* fileDesc){
 	int i;
 	for(i=0;i<records; i++){
 		fread(&fileName,sizeof(fileName),1,fileDesc);
-		if (strcmp(filename,fileName.fileName) == 0)
+		if (strcmp(filename,fileName.fileName) == 0){
+			if (fileName.inodeOffset == 0){
+				printf("\nFile %s not found", filename);
+				return -1;
+			}
 			return fileName.inodeOffset;
+		}
 	}
 	printf("\nFile %s not found", filename);
 	return -1;
@@ -920,20 +931,31 @@ void remove_file_from_directory(int file_node_num, FILE*  fileDesc){
 	FileName fileName;
 
 	directory_inode = read_inode(1,fileDesc);
+	//printf("directoty inode %d", directory_inode);
 
 	// Move to the beginning of directory file (3rd record)
-	fseek(fileDesc,(block_size*directory_inode.addr[0]+sizeof(fileName)*2),SEEK_SET); //Move to third record in directory
+	fseek(fileDesc,(block_size*directory_inode.addr[0]),SEEK_SET); //Move to third record in directory
 	int records=(block_size-2)/sizeof(fileName);
 	int i;
+	fread(&fileName,sizeof(fileName),1,fileDesc);
+	//printf("\n file name %s", fileName.fileName);
+	//printf("\n inode offset %d", fileName.inodeOffset);
+
 	for(i=0;i<records; i++){
-		fread(&fileName,sizeof(fileName),1,fileDesc);
+
+		//printf("\nfile name list: %s", fileName.fileName);
+
 		if (fileName.inodeOffset == file_node_num){
+			printf("File found! removing from the directory.");
 			fseek(fileDesc, (-1)*sizeof(fileName), SEEK_CUR); //Go one record back
 			fileName.inodeOffset = 0;
 			memset(fileName.fileName,0,sizeof(fileName.fileName));
 			fwrite(&fileName,sizeof(fileName),1,fileDesc);
 			return;
 			}
+		fread(&fileName,sizeof(fileName),1,fileDesc);
+//		fseek(fileDesc, sizeof(fileName), SEEK_CUR);
 	}
+	printf("not able to delete from directory");
 	return;
 }
