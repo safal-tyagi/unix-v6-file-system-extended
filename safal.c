@@ -318,9 +318,9 @@ int InitializeFS(int fileDesc, long nBlocks, int nInodes) {
     iNode.addr[0] = firstFreeBlock - 1;
     for (i = 1; i < 8; i++)
         iNode.addr[i] = 0;
-    for (i = 1; i < 2; i++)
+    for (i = 0; i < 2; i++)
         iNode.actime[i] = (short) time(0);
-    for (i = 1; i < 2; i++)
+    for (i = 0; i < 2; i++)
         iNode.modtime[i] = (short) time(0);
 
     // Create root directory file and initialize with "." and ".." Set offset to 1st i-node
@@ -351,10 +351,10 @@ int InitializeFS(int fileDesc, long nBlocks, int nInodes) {
 *existing or newly created destination file given in the command.
 */
 void CopyIN(const char *src, const char *targ) {
+	printf("in cpin");
     int indirect = 0;
     int indirectfn_return = 1;
     char reader[BLOCK_SIZE];
-    int bytes_read;
     int srcfd;
     int extfilesize = 0;
     //open external file
@@ -362,7 +362,10 @@ void CopyIN(const char *src, const char *targ) {
         printf("\nerror opening file: %s \n", src);
         return;
     }
+	printf("srcid : %d", srcfd);
     unsigned int inumber = AllocateInode();
+	printf("inumber : %d", inumber);
+
     if (inumber < 0) {
         printf("Error : ran out of inodes \n");
         return;
@@ -380,45 +383,82 @@ void CopyIN(const char *src, const char *targ) {
     iNode.size0 = '0';
 
     int i = 0;
-
+	int blocks_read = 1;
+	printf("blocks_read %d", blocks_read);
+	
+	unsigned short sec_in;
+	unsigned short third_in;
+	unsigned short first_in;
+	
+	fseek(&src, 0L, SEEK_SET);
+	printf("blocks_read %d", blocks_read);
     //start reading external file and perform file size calculation simultaneously
-    while (1) {
-        if ((bytes_read = read(srcfd, reader, BLOCK_SIZE)) != 0) {
-            newblocknum = AllocateDataBlock();
-            WriteCharBlock(reader, newblocknum);
-            iNode.addr[i] = newblocknum;
-            // When bytes returned by read() system call falls below the block size of
-            //1024, reading and writing are complete. Print file size in bytes and exit
-            if (bytes_read < BLOCK_SIZE) {
-                extfilesize = i * BLOCK_SIZE + bytes_read;
-                printf("Small file copied\n");
-                iNode.size1 = extfilesize;
-                printf("File size = %d bytes\n", extfilesize);
-                break;
-            }
-            i++;
+    while (blocks_read == 1) {
+		//printf("blocks_read in while %d", blocks_read);
+		blocks_read = fread( &reader, BLOCK_SIZE, 1, srcfd); 
+		printf("blocks_read after fread %d", blocks_read);
+		printf("%d", blocks_read);
+		newblocknum = AllocateDataBlock();
+		
+		WriteCharBlock(reader, newblocknum);
+		iNode.addr[i] = newblocknum;
+		//1024, reading and writing are complete. Print file size in bytes and exit
+		if (i < 22) {
+			extfilesize = blocks_read * BLOCK_SIZE;
+			iNode.size1 = extfilesize;
+			iNode.addr[i] = newblocknum;
+		}
+		
 
-            //if the counter i exceeds 21(maximum number of elements in addr[] array,
-            //transfer control to new function that creates indirect blocks which
-            //handles large files(file size > 56 KB).
-            if (i > 22) {
+		//if the counter i exceeds 21(maximum number of elements in addr[] array,
+		//transfer control to new function that creates indirect blocks which
+		//handles large files(file size > 22 KB).
+		else if (i >= 22) {
 
-                indirectfn_return = MakeIndirectBlock(srcfd, iNode.addr[0]);
-                indirect = 1;
-                break;
-            }
-        }
-            // When bytes returned by read() system call is 0,
-            // reading and writing are complete. Print file size in bytes and exit
-        else {
-            extfilesize = i * BLOCK_SIZE;
-            printf("Small file copied\n");
-            iNode.size1 = extfilesize;
-            printf("File size = %d bytes\n", extfilesize);
-            break;
-        }
+			int logical_block = (i-22)/512;
+			int prev_block = (i-23)/512;
+			int logical_block2 = logical_block/512;
+			int prev_block2 = (i-23)/(512*512);
+			int word_in_block = (i-23) % 512;
+			int word_in_block2 = (i-23) % (512*512);
+			if(i == 22 && word_in_block2 == 0){
+				third_in = AllocateDataBlock();
+				iNode.addr[i] = third_in;
+			}
+			if(prev_block2 < logical_block2){
+				sec_in = AllocateDataBlock();
+				fseek(fd, iNode.addr[22]*BLOCK_SIZE+(logical_block2)*2, SEEK_SET);
+				fwrite(&sec_in,sizeof(sec_in),1,fd);
+				fflush(fd);
+			}
 
+			if(prev_block < logical_block){
+				first_in = AllocateDataBlock();
+
+				fseek(fd, iNode.addr[22]*BLOCK_SIZE+(logical_block2)*2, SEEK_SET);
+				fread(&sec_in,sizeof(sec_in),1,fd);
+				fseek(fd, sec_in*BLOCK_SIZE+(logical_block)*2, SEEK_SET);
+				fwrite(&first_in,sizeof(first_in),1,fd);
+				fflush(fd);
+			}
+
+			fseek(fd, sec_in*BLOCK_SIZE+(logical_block)*2, SEEK_SET);
+			fread(&first_in,sizeof(first_in),1,fd);
+
+			fseek(fd, first_in*BLOCK_SIZE+(word_in_block2)*2, SEEK_SET);
+			fwrite(&newblocknum,sizeof(newblocknum),1,fd);
+
+			
+			
+			indirect = 1;
+		}
+	
     }
+	
+	extfilesize = i * BLOCK_SIZE;
+	iNode.size1 = extfilesize;
+	printf("File size = %d bytes\n", extfilesize);
+	
     iNode.actime[0] = 0;
     iNode.modtime[0] = 0;
     iNode.modtime[1] = 0;
@@ -521,7 +561,7 @@ void CopyOUT(const char *src, const char *targ) {
 
     total_blocks = (int) ceil(iNode.size1 / 1024.0);
     remaining_bytes = iNode.size1 % BLOCK_SIZE;
-
+	unsigned char last_reader[remaining_bytes];
 
     //read and write small file to external file
     if (indirect == 0)                //check if it is a small file. indirect = 0 implies the function that makes indirect blocks was not called during CopyIN.
@@ -544,36 +584,42 @@ void CopyOUT(const char *src, const char *targ) {
     //read and write large file to external file
     if (indirect == 1)            //check if it is a large file. indirect = 1 implies the function that makes indirect blocks was called during CopyIN.
     {
-        total_blocks = iNode.size1 / 1024;
-        indirect_block_chunks = (int) ceil(
-                total_blocks / 256.0);    //each chunk of indirect blocks contain 256 elements that point to data blocks
-        remaining_indirectblks = total_blocks % 256;
-        printf("file size = %d \n", iNode.size1);
+		unsigned short next_block_number;
+		unsigned short sec_ind_block;
+		unsigned short third_ind_block;
+		for (i = 0; i < total_blocks; i++){
+			int logical_block = (i-22)/512;
+			int logical_block2 = logical_block/512;
+			int word_in_block = (i-22) % (512*512);
+			if (i <22){
+				next_block_number = iNode.addr[i];
+			}
+			else{
+				// Read block number of second indirect block
+				fseek(fd, iNode.addr[22]*BLOCK_SIZE+(logical_block2)*2, SEEK_SET);
+				fread(&sec_ind_block,sizeof(sec_ind_block),1,fd);
 
-        //Loop for chunks of indirect blocks
-        for (i = 0; i < indirect_block_chunks; i++) {
-            ReadIntBlock(reader1,
-                         iNode.addr[i]);                //store block numbers contained in addr[] array in integer reader array )
+				// Read third indirect block number from second indirect block
+				fseek(fd, sec_ind_block*BLOCK_SIZE+logical_block*2, SEEK_SET);
+				fread(&third_ind_block,sizeof(next_block_number),1,fd);
 
-            //if counter reaches last chunk of indirect blocks, program loops the remaining and exits after writing the remaining bytes
-            if (i == (indirect_block_chunks - 1))
-                total_blocks = remaining_indirectblks;
-            for (j = 0; j < 256 && j < total_blocks; j++) {
-
-                ReadCharBlock(reader,
-                              reader1[j]);            //store block contents pointed by addr[] array in character  reader array )
-                if ((bytes_written = write(targfd, reader, BLOCK_SIZE)) == -1) {
-                    printf("\n Error in writing to external file\n");
-                    return;
-                }
-                if (j == (total_blocks - 1)) {
-                    write(targfd, reader, remaining_bytes);
-                    printf("Contents were transferred to external file\n");
-                    return;
-                }
-            }
-        }
-    }
+				// Read target block number from third indirect block
+				fseek(fd, third_ind_block*BLOCK_SIZE+word_in_block*2, SEEK_SET);
+				fread(&next_block_number,sizeof(next_block_number),1,fd);
+			}
+			
+			fseek(fd, next_block_number*BLOCK_SIZE, SEEK_SET);
+			if ((i <(total_blocks-1)) || (remaining_bytes ==0)){
+				fread(reader,sizeof(reader),1,fd);
+				fwrite(reader,sizeof(reader),1,targfd);
+				}
+			else {
+				fread(last_reader,sizeof(last_reader),1,fd);
+				fwrite(last_reader,sizeof(last_reader),1,targfd);
+				}
+			}
+			
+	}
 }
 
 //***************************************************************************
@@ -728,76 +774,6 @@ int WriteDirectory(INode rootinode, FileName fileName) {
 
 
 //***************************************************************************
-// MakeIndirectBlock: function that creates indirect blocks. handles large file (file size > 56 KB)
-//***************************************************************************
-/*largest file size handled : ( 22 * 256 * 1024 ) /1024 = 28672 KB.*/
-int MakeIndirectBlock(int fd, int block_num) {
-    char reader[BLOCK_SIZE];
-    unsigned int indirectblocknum[256];                //integer array to store indirect blocknumbers
-    int i = 0;
-    int j = 0;
-    int bytes_read;
-    int blocks_written = 0;
-    int extfilesize = 22 * BLOCK_SIZE;            //filesize is initialized to small file size since data would have been read upto this size.
-    for (i = 0; i < 22; i++)
-        indirectblocknum[i] = iNode.addr[i];        //transfer existing block numbers in addr[] array to new temporary array
-
-    iNode.addr[0] = AllocateDataBlock();        //allocate a data block which will be used to store the temporary integer array of indirect block numbers
-
-    for (i = 1; i < 22; i++)
-        iNode.addr[i] = 0;
-
-    i = 22;
-    while (1) {
-        if ((bytes_read = read(fd, reader, BLOCK_SIZE)) != 0) {
-            indirectblocknum[i] = AllocateDataBlock();  //allocate a data block which will be used to store the temporary integer array of indirect block numbers
-            WriteCharBlock(reader, indirectblocknum[i]);
-            i++;
-
-            // When bytes returned by read() system call falls below the block size of
-            //1024, reading and writing are complete. Print file size in bytes and exit
-            if (bytes_read < BLOCK_SIZE) {
-                WriteIntBlock(indirectblocknum, iNode.addr[j]);
-                printf("Large File copied\n");
-                extfilesize = extfilesize + blocks_written * BLOCK_SIZE + bytes_read;
-                iNode.size1 = extfilesize;
-                printf("File size = %d bytes\n", extfilesize);
-                break;
-            }
-            blocks_written++;
-            //When counter i reaches 256, first indirect block is full. So reset counters to 0
-            //allocate new block to store it in addr[] array that will be the new indirect block.
-
-            if (i > 255 && j <= 21) {
-                WriteIntBlock(indirectblocknum, iNode.addr[j]);
-                iNode.addr[++j] = AllocateDataBlock();
-                i = 0;
-                extfilesize = extfilesize + 256 * BLOCK_SIZE;
-                blocks_written = 0;
-            }
-            //if all the elements in addr[] array have been exhausted with indirect blocks, maximum capacity of
-            //28672 KB has been reached. Throw an error that the file is too large for this file system.
-            if (j > 21) {
-                printf("This file copy is not supported by the file system as the file is very large\n");
-                return -1;
-                break;
-            }
-        }
-            // When bytes returned by read() system call is 0,
-            // reading and writing are complete. Print file size in bytes and exit
-        else {
-            WriteIntBlock(indirectblocknum, iNode.addr[j]);
-            iNode.size1 = extfilesize;
-            printf("Large File copied\n");
-            printf("File size = %d bytes\n", extfilesize);
-            break;
-        }
-
-    }
-    return 0;
-}
-
-//***************************************************************************
 // Data blocks chaining procedure
 //***************************************************************************
 void LinkDataBlocks(unsigned short total_blcks) {
@@ -895,7 +871,7 @@ void AddFreeBlock(int fileDesc, long blockNumber) {
     if (superBlock.nfree == 250) {
         //printf("\nCopy free list to block %i",blockNumber);
         copyToBlock.nfree = 250;
-        int i = 0;
+        int i;
         for (i = 0; i < 250; i++)
             copyToBlock.free[i] = superBlock.free[i];
         lseek(fileDesc, blockNumber * BLOCK_SIZE, SEEK_SET);
