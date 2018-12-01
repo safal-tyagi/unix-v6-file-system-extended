@@ -130,15 +130,26 @@ int inode_size=64;
 int fileDesc;
 SuperBlock superBlock;
 
+//***************************************************************************
+// MAIN: driver
+//***************************************************************************
+
 int main() {
     printf("\n## WELCOME TO UNIX V6 FILE SYSTEM ##\n");
     printf("\n## PLEASE ENTER ONE OF THE FOLLOWING COMMAND ##\n");
     printf("\n\t ~initfs - To initialize the file system \n");
-    printf("\t\t ~Example :: initfs /home/venky/disk 5000 300 \n");
+    printf("\t\t ~Example :: initfs P:/test 5000 300 \n");
+	printf("\n\t ~cpin - To copy file contents from external file to a new file the file system \n");
+    printf("\t\t ~Example :: cpin P:/in.txt P:/test/c.txt \n");
+    printf("\n\t ~cpout - To copy file contents from a new file the file system to an external file \n");
+    printf("\t\t ~Example :: cpout P:/test/c.txt P:/out.txt \n");
+    printf("\n\t ~mkdir - To initialize the file system \n");
+    printf("\t\t ~Example :: mkdir P:/test/mk \n");
+	printf("\n\t ~rm - To remove a file from file system \n");
+    printf("\t\t ~Example :: rm P:/test/c.txt \n");
     printf("\n\t ~q - To quit the program\n");
 
     short fsStatus; // status of file system creation
-    short cmdStatus; // status of command execution
     int cmdCount = 0; // cmdCount of commands
 
     // Accept userCmd, max lenght of userCmd : 256 characters
@@ -262,12 +273,13 @@ int main() {
     }
 }
 
+//***************************************************************************
+// InitializeFS
+//***************************************************************************
 int InitializeFS(int nBlocks, int nInodes)
 {
 
 	long i = 0;
-
-
 	rewind(fileDesc);
 	// TEST ONLY: fill blocks with 0s to confirm size
     char charbuffer[BLOCK_SIZE];  // char buffer to read/write the blocks to/from file
@@ -370,6 +382,9 @@ int InitializeFS(int nBlocks, int nInodes)
 	return 0;
 }
 
+//***************************************************************************
+// CopyIN
+//***************************************************************************
 int CopyIN(const char* extFile,const char* fsFile){
 	printf("\nInside cpin, copy from %s to %s \n",extFile, fsFile);
 	INode iNode;
@@ -442,6 +457,9 @@ int CopyIN(const char* extFile,const char* fsFile){
 	return 0;
 }
 
+//***************************************************************************
+// CopyOUT
+//***************************************************************************
 int CopyOUT(const char* fsFile,const char* extFile){
 	int fileInodeNum;
 	fileInodeNum = GetFileInode(fsFile);
@@ -490,6 +508,9 @@ int CopyOUT(const char* fsFile,const char* extFile){
 	return 0;
 }
 
+//***************************************************************************
+// MakeDirectory
+//***************************************************************************
 int MakeDirectory(const char* dirName){
 	INode directory_inode, free_node;
 	FileName fileName;
@@ -537,6 +558,9 @@ int MakeDirectory(const char* dirName){
 	return 0;
 }
 
+//***************************************************************************
+// Remove
+//***************************************************************************
 int Remove(const char* filename){
 	printf("\nInside Rm, remove file %s",filename);
 	int fileInodeNum, file_size, block_number_order, next_block_number,i;
@@ -577,6 +601,73 @@ int Remove(const char* filename){
 }
 
 //***************************************************************************
+// AddFileToDirectory
+//***************************************************************************
+int AddFileToDirectory(const char* fsFile){
+	INode directory_inode, free_node;
+	FileName fileName;
+	int inodeNumber, flag;
+	int found = 0;
+	inodeNumber=1;
+	while(found==0){
+		inodeNumber++;
+		free_node = GetInodeData(inodeNumber);
+		flag = MID(free_node.flags,15,16);
+		if (flag == 0){
+			found = 1;
+		}
+	}
+
+	directory_inode = GetInodeData(1);
+
+	// Move to the end of directory file
+	fseek(fileDesc,(BLOCK_SIZE*directory_inode.addr[0]+directory_inode.size1),SEEK_SET);
+	// Add record to file directory
+	fileName.inodeOffset = inodeNumber;
+	strcpy(fileName.fileName, fsFile);
+	fwrite(&fileName,16,1,fileDesc);
+
+	//Update Directory file inode to increment size by one record
+	directory_inode.size1+=16;
+	UpdateInode(1,directory_inode);
+
+	return inodeNumber;
+
+}
+
+//***************************************************************************
+// RemoveFileFromDirectory
+//***************************************************************************
+void RemoveFileFromDirectory(int fileInodeNum){
+	INode directory_inode;
+	FileName fileName;
+
+	directory_inode = GetInodeData(1);
+
+	// Move to the beginning of directory file
+	fseek(fileDesc,(BLOCK_SIZE*directory_inode.addr[0]),SEEK_SET); 
+	int records=(BLOCK_SIZE-2)/sizeof(fileName);
+	int i;
+	fread(&fileName,sizeof(fileName),1,fileDesc);
+
+	for(i=0;i<records; i++){
+
+		if (fileName.inodeOffset == fileInodeNum){
+			printf("File found! removing from the directory.");
+			fseek(fileDesc, (-1)*sizeof(fileName), SEEK_CUR); //Go one record back
+			fileName.inodeOffset = 0;
+			memset(fileName.fileName,0,sizeof(fileName.fileName));
+			fwrite(&fileName,sizeof(fileName),1,fileDesc);
+			return;
+			}
+
+			fread(&fileName,sizeof(fileName),1,fileDesc);
+	}
+	printf("not able to delete from directory");
+	return;
+}
+
+//***************************************************************************
 // AddFreeBlock: Adds a free block and update the super-block accordingly
 //***************************************************************************
 void AddFreeBlock(int blockNumber){
@@ -606,6 +697,44 @@ void AddFreeBlock(int blockNumber){
 	fwrite(&superBlock,sizeof(superBlock),1,fileDesc);
 }
 
+//***************************************************************************
+// GetFreeBlock
+//***************************************************************************
+int GetFreeBlock(){
+	FreeBlock copy_from_block;
+	int free_block;
+
+	fseek(fileDesc, BLOCK_SIZE, SEEK_SET);
+	fread(&superBlock,sizeof(superBlock),1,fileDesc);
+	superBlock.nfree--;
+	free_block = superBlock.free[superBlock.nfree];
+	if (free_block ==0){ 											// No more free blocks left
+		printf("(\nNo free blocks left");
+		fseek(fileDesc, BLOCK_SIZE, SEEK_SET);
+		fwrite(&superBlock,sizeof(superBlock),1,fileDesc);
+		fflush(fileDesc);
+		return -1;
+	}
+
+	// Check if need to copy free blocks from linked list
+	if (superBlock.nfree == 0) {
+		fseek(fileDesc, BLOCK_SIZE*superBlock.free[superBlock.nfree], SEEK_SET);
+		fread(&copy_from_block,sizeof(copy_from_block),1,fileDesc);
+		superBlock.nfree = copy_from_block.nfree;
+		CopyFreeArray(copy_from_block.free, superBlock.free, 250);
+		superBlock.nfree--;
+		free_block = superBlock.free[superBlock.nfree];
+	}
+
+	fseek(fileDesc, BLOCK_SIZE, SEEK_SET);
+	fwrite(&superBlock,sizeof(superBlock),1,fileDesc);
+	fflush(fileDesc);
+	return free_block;
+}
+
+//***************************************************************************
+// CopyFreeArray
+//***************************************************************************
 void CopyFreeArray(unsigned short *from_array, unsigned short *to_array, int buf_len){
 	int i;
 	for (i=0;i<buf_len;i++){
@@ -613,6 +742,52 @@ void CopyFreeArray(unsigned short *from_array, unsigned short *to_array, int buf
 	}
 }
 
+//***************************************************************************
+// GetBlockLarge
+//***************************************************************************
+unsigned short GetBlockLarge(int fileInodeNum,int block_number_order){
+	INode file_inode;
+	unsigned short block_num_tow;
+	unsigned short sec_ind_block;
+	unsigned short third_ind_block;
+
+	file_inode = GetInodeData(fileInodeNum);
+    int logical_block = (block_number_order-22)/512;
+	int logical_block2 = logical_block/512;
+	int word_in_block = (block_number_order-22) % (512*512);
+	if (block_number_order <22){
+		return (file_inode.addr[block_number_order]);
+	}
+	else{
+		// Read block number of second indirect block
+		fseek(fileDesc, file_inode.addr[22]*BLOCK_SIZE+(logical_block2)*2, SEEK_SET);
+		fread(&sec_ind_block,sizeof(sec_ind_block),1,fileDesc);
+
+		// Read third indirect block number from second indirect block
+		fseek(fileDesc, sec_ind_block*BLOCK_SIZE+logical_block*2, SEEK_SET);
+		fread(&third_ind_block,sizeof(block_num_tow),1,fileDesc);
+
+		// Read target block number from third indirect block
+		fseek(fileDesc, third_ind_block*BLOCK_SIZE+word_in_block*2, SEEK_SET);
+		fread(&block_num_tow,sizeof(block_num_tow),1,fileDesc);
+	}
+
+	return block_num_tow;
+
+}
+
+//***************************************************************************
+// GetBlockSmall
+//***************************************************************************
+unsigned short GetBlockSmall(int fileInodeNum,int block_number_order){
+	INode file_inode;
+	file_inode = GetInodeData(fileInodeNum);
+	return (file_inode.addr[block_number_order]);
+}
+
+//***************************************************************************
+// AddBlockToInodeLarge
+//***************************************************************************
 void AddBlockToInodeLarge(int block_order_num, int blockNumber, int inodeNumber){  //Assume large file
 	INode file_inode;
 	unsigned short block_num_tow = blockNumber;
@@ -664,6 +839,9 @@ void AddBlockToInodeLarge(int block_order_num, int blockNumber, int inodeNumber)
 
 }
 
+//***************************************************************************
+// AddBlockToInodeSmall
+//***************************************************************************
 void AddBlockToInodeSmall(int block_order_num, int blockNumber, int inodeNumber){
 	//Assume small file
 	INode file_inode;
@@ -674,71 +852,30 @@ void AddBlockToInodeSmall(int block_order_num, int blockNumber, int inodeNumber)
 	return;
 }
 
-int GetFreeBlock(){
-	FreeBlock copy_from_block;
-	int free_block;
+//***************************************************************************
+// GetFileSize
+//***************************************************************************
+unsigned int GetFileSize(int inodeNumber){
+	INode to_file_inode;
+	unsigned int file_size;
 
-	fseek(fileDesc, BLOCK_SIZE, SEEK_SET);
-	fread(&superBlock,sizeof(superBlock),1,fileDesc);
-	superBlock.nfree--;
-	free_block = superBlock.free[superBlock.nfree];
-	if (free_block ==0){ 											// No more free blocks left
-		printf("(\nNo free blocks left");
-		fseek(fileDesc, BLOCK_SIZE, SEEK_SET);
-		fwrite(&superBlock,sizeof(superBlock),1,fileDesc);
-		fflush(fileDesc);
-		return -1;
-	}
+	unsigned short bit0_15;
+	unsigned char bit16_23;
+	unsigned short bit24;
 
-	// Check if need to copy free blocks from linked list
-	if (superBlock.nfree == 0) {
-		fseek(fileDesc, BLOCK_SIZE*superBlock.free[superBlock.nfree], SEEK_SET);
-		fread(&copy_from_block,sizeof(copy_from_block),1,fileDesc);
-		superBlock.nfree = copy_from_block.nfree;
-		CopyFreeArray(copy_from_block.free, superBlock.free, 250);
-		superBlock.nfree--;
-		free_block = superBlock.free[superBlock.nfree];
-	}
+	to_file_inode = GetInodeData(inodeNumber);
 
-	fseek(fileDesc, BLOCK_SIZE, SEEK_SET);
-	fwrite(&superBlock,sizeof(superBlock),1,fileDesc);
-	fflush(fileDesc);
-	return free_block;
+	bit24 = LAST(to_file_inode.flags,1);
+	bit16_23 = to_file_inode.size0;
+	bit0_15 = to_file_inode.size1;
+
+	file_size = (bit24<<24) | ( bit16_23 << 16) | bit0_15;
+	return file_size;
 }
 
-
-int AddFileToDirectory(const char* fsFile){
-	INode directory_inode, free_node;
-	FileName fileName;
-	int inodeNumber, flag;
-	int found = 0;
-	inodeNumber=1;
-	while(found==0){
-		inodeNumber++;
-		free_node = GetInodeData(inodeNumber);
-		flag = MID(free_node.flags,15,16);
-		if (flag == 0){
-			found = 1;
-		}
-	}
-
-	directory_inode = GetInodeData(1);
-
-	// Move to the end of directory file
-	fseek(fileDesc,(BLOCK_SIZE*directory_inode.addr[0]+directory_inode.size1),SEEK_SET);
-	// Add record to file directory
-	fileName.inodeOffset = inodeNumber;
-	strcpy(fileName.fileName, fsFile);
-	fwrite(&fileName,16,1,fileDesc);
-
-	//Update Directory file inode to increment size by one record
-	directory_inode.size1+=16;
-	UpdateInode(1,directory_inode);
-
-	return inodeNumber;
-
-}
-
+//***************************************************************************
+// InitInode
+//***************************************************************************
 INode InitInode(int inodeNumber, unsigned int file_size){
 	INode to_file_inode;
 	unsigned short bit0_15;
@@ -769,7 +906,7 @@ INode InitInode(int inodeNumber, unsigned int file_size){
 	to_file_inode.uid=0;
 	to_file_inode.gid=0;
 	to_file_inode.size0=bit16_23; // Middle 8 bits of file size
-	to_file_inode.size1=bit0_15; //Leeast significant 16 bits of file size
+	to_file_inode.size1=bit0_15; //Least significant 16 bits of file size
 	int a = 0;
     for (a = 1; a < 23; a++)
         to_file_inode.addr[a] = 0;
@@ -781,75 +918,28 @@ INode InitInode(int inodeNumber, unsigned int file_size){
 	return to_file_inode;
 }
 
+//***************************************************************************
+// GetInodeData
+//***************************************************************************
 INode GetInodeData(int inodeNumber){
 	INode to_file_inode;
-	fseek(fileDesc,(BLOCK_SIZE*2+inode_size*(inodeNumber-1)),SEEK_SET); //move to the beginning of inode number inodeNumber
+	fseek(fileDesc,(BLOCK_SIZE*2+inode_size*(inodeNumber-1)),SEEK_SET); //move to the beginning of inode
 	fread(&to_file_inode,inode_size,1,fileDesc);
 	return to_file_inode;
 }
 
+//***************************************************************************
+// UpdateInode
+//***************************************************************************
 int UpdateInode(int inode_num, INode inode){
-	fseek(fileDesc,(BLOCK_SIZE*2+inode_size*(inode_num-1)),SEEK_SET); //move to the beginning of inode with inode_num
+	fseek(fileDesc,(BLOCK_SIZE*2+inode_size*(inode_num-1)),SEEK_SET); //move to the beginning of inode
 	fwrite(&inode,inode_size,1,fileDesc);
 	return 0;
 }
 
-
-unsigned short GetBlockLarge(int fileInodeNum,int block_number_order){
-	INode file_inode;
-	unsigned short block_num_tow;
-	unsigned short sec_ind_block;
-	unsigned short third_ind_block;
-
-	file_inode = GetInodeData(fileInodeNum);
-    int logical_block = (block_number_order-22)/512;
-	int logical_block2 = logical_block/512;
-	int word_in_block = (block_number_order-22) % (512*512);
-	if (block_number_order <22){
-		return (file_inode.addr[block_number_order]);
-	}
-	else{
-		// Read block number of second indirect block
-		fseek(fileDesc, file_inode.addr[22]*BLOCK_SIZE+(logical_block2)*2, SEEK_SET);
-		fread(&sec_ind_block,sizeof(sec_ind_block),1,fileDesc);
-
-		// Read third indirect block number from second indirect block
-		fseek(fileDesc, sec_ind_block*BLOCK_SIZE+logical_block*2, SEEK_SET);
-		fread(&third_ind_block,sizeof(block_num_tow),1,fileDesc);
-
-		// Read target block number from third indirect block
-		fseek(fileDesc, third_ind_block*BLOCK_SIZE+word_in_block*2, SEEK_SET);
-		fread(&block_num_tow,sizeof(block_num_tow),1,fileDesc);
-	}
-
-	return block_num_tow;
-
-}
-
-unsigned short GetBlockSmall(int fileInodeNum,int block_number_order){
-	INode file_inode;
-	file_inode = GetInodeData(fileInodeNum);
-	return (file_inode.addr[block_number_order]);
-}
-
-unsigned int GetFileSize(int inodeNumber){
-	INode to_file_inode;
-	unsigned int file_size;
-
-	unsigned short bit0_15;
-	unsigned char bit16_23;
-	unsigned short bit24;
-
-	to_file_inode = GetInodeData(inodeNumber);
-
-	bit24 = LAST(to_file_inode.flags,1);
-	bit16_23 = to_file_inode.size0;
-	bit0_15 = to_file_inode.size1;
-
-	file_size = (bit24<<24) | ( bit16_23 << 16) | bit0_15;
-	return file_size;
-}
-
+//***************************************************************************
+// GetFileInode
+//***************************************************************************
 int GetFileInode(const char* filename){
 	INode directory_inode;
 	FileName fileName;
@@ -874,31 +964,3 @@ int GetFileInode(const char* filename){
 	return -1;
 }
 
-void RemoveFileFromDirectory(int fileInodeNum){
-	INode directory_inode;
-	FileName fileName;
-
-	directory_inode = GetInodeData(1);
-
-	// Move to the beginning of directory file (3rd record)
-	fseek(fileDesc,(BLOCK_SIZE*directory_inode.addr[0]),SEEK_SET); //Move to third record in directory
-	int records=(BLOCK_SIZE-2)/sizeof(fileName);
-	int i;
-	fread(&fileName,sizeof(fileName),1,fileDesc);
-
-	for(i=0;i<records; i++){
-
-		if (fileName.inodeOffset == fileInodeNum){
-			printf("File found! removing from the directory.");
-			fseek(fileDesc, (-1)*sizeof(fileName), SEEK_CUR); //Go one record back
-			fileName.inodeOffset = 0;
-			memset(fileName.fileName,0,sizeof(fileName.fileName));
-			fwrite(&fileName,sizeof(fileName),1,fileDesc);
-			return;
-			}
-
-			fread(&fileName,sizeof(fileName),1,fileDesc);
-	}
-	printf("not able to delete from directory");
-	return;
-}
