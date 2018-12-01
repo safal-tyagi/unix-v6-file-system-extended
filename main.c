@@ -97,190 +97,176 @@ typedef union
     unsigned int dword;
 } File_Size;
 
-int InitializeFS(int nBlocks, int nInodes,FILE* fileDesc);
-int CopyIN(const char* extFile,const char* fsFile,FILE* fileDesc);
-int CopyOUT(const char* fsFile,const char* extFile,FILE* fileDesc);
-int Rm(const char* filename,FILE* fileDesc);
-int MakeDirectory(const char* dirName,FILE* fileDesc);
-int add_file_to_dir(const char* fsFile,FILE* fileDesc);
-int get_inode_by_file_name(const char* fsFile,FILE* fileDesc);
-INode read_inode(int to_file_inode_num, FILE* fileDesc);
-INode init_file_inode(int to_file_inode_num, unsigned int file_size, FILE* fileDesc);
-int write_inode(int inode_num, INode inode, FILE* fileDesc);
-void AddFreeBlock(int blockNumber, FILE* fileDesc);
-int get_free_block(FILE* fileDesc);
-void copy_int_array(unsigned short *from_array, unsigned short *to_array, int buf_len);
-void add_block_to_inode(int block_order_num, int blockNumber, int to_file_inode_num, FILE* fileDesc);
-unsigned short get_block_for_big_file(int file_node_num,int block_number_order,FILE* fileDesc);
-unsigned int get_inode_file_size(int to_file_inode_num, FILE* fileDesc);
-void add_block_to_free_list(int next_block_number, FILE* fileDesc);
-void remove_file_from_directory(int file_node_num, FILE*  fileDesc);
-void add_block_to_inode_small_file(int block_order_num, int blockNumber, int to_file_inode_num, FILE* fileDesc);
-unsigned short get_block_for_small_file(int file_node_num,int block_number_order, FILE* fileDesc);
+// Primary methods
+int InitializeFS(int nBlocks, int nInodes);
+int CopyIN(const char* extFile,const char* fsFile);
+int CopyOUT(const char* fsFile,const char* extFile);
+int MakeDirectory(const char* dirName);
+int Remove(const char* filename);
+
+// Directory
+int AddFileToDirectory(const char* fsFile);
+void RemoveFileFromDirectory(int fileInodeNum);
+
+// Block management
+void AddFreeBlock(int next_block_number);
+int GetFreeBlock();
+void CopyFreeArray(unsigned short *from_array, unsigned short *to_array, int buf_len);
+unsigned short GetBlockSmall(int fileInodeNum,int block_number_order);
+unsigned short GetBlockLarge(int fileInodeNum,int block_number_order);
+void AddBlockToInodeSmall(int block_order_num, int blockNumber, int inodeNumber);
+void AddBlockToInodeLarge(int block_order_num, int blockNumber, int inodeNumber);
+unsigned int GetFileSize(int inodeNumber);
+
+// Inode management
+int GetFileInode(const char* fsFile);
+int UpdateInode(int inode_num, INode inode);
+INode GetInodeData(int inodeNumber);
+INode InitInode(int inodeNumber, unsigned int file_size);
+
 
 int BLOCK_SIZE=1024;
 int inode_size=64;
-int main(int argc, char *argv[])
-{
-	int status,file_size;
-	FILE* fileDesc = NULL;
-	const char *filename = argv[1];
-	int max = 200;
-	char* command = (char*)malloc(max); /* allocate buffer for user command */
-	int cmd_counter = 0;
+int fileDesc;
+SuperBlock superBlock;
 
-	if (argc !=2){
-		printf("\nWrong number of parameters. Only one parameter is allowed: file_system name \n");
-		exit(0);
-	  }
+int main() {
+    printf("\n## WELCOME TO UNIX V6 FILE SYSTEM ##\n");
+    printf("\n## PLEASE ENTER ONE OF THE FOLLOWING COMMAND ##\n");
+    printf("\n\t ~initfs - To initialize the file system \n");
+    printf("\t\t ~Example :: initfs /home/venky/disk 5000 300 \n");
+    printf("\n\t ~q - To quit the program\n");
 
-	//printf("\nBefore open file.File name: {%s}\n", filename);
+    short fsStatus; // status of file system creation
+    short cmdStatus; // status of command execution
+    int cmdCount = 0; // cmdCount of commands
 
-	if( access( filename, F_OK ) != -1 ) {
-		// file exists
-		printf("\nFile system %s exists. Trying to open...\n",filename);
-		fileDesc = fopen(filename, "r+");
-		fseek(fileDesc, 0L, SEEK_END); // Move to the end of the file
-		file_size = ftell(fileDesc);
-		if (file_size == 0){
-			printf("\nFile system %s doesn't exists. You need to run initfs command\n",filename);
-			}
-		else{
-			printf("\nFile size is %i\n",file_size);
-			rewind(fileDesc);
-			}
-		}
-	else {
-		// file doesn't exist
-		fileDesc = fopen(filename, "w+");
-		printf("\nFile system %s doesn't exists. You need to run initfs command\n",filename);
-		}
+    // Accept userCmd, max lenght of userCmd : 256 characters
+    char userCmd[256];
 
+    while (1) { // wait for user input: 'q' command
+        printf("Enter Command : ");
+        cmdCount++;
 
-	if(NULL == fileDesc){
-	printf("\n fopen() Error!!!\n");
-	return 1;
-	}
+        // get userCmd from user line-by-line
+        scanf(" %[^\n]s", userCmd);
 
-	while(1){
-			//While loop, wait for user input
-		printf("MyFileSystem>>");
-		cmd_counter++;
+        // if user press q, exit saving changes
+        if (strcmp(userCmd, "q") == 0) {
+            printf("Total commands executed : %i\n", cmdCount);
+            exit(0);
+        }
 
-		int i = 0;
-		while (1) {
-			// Read user input and process it:
-			//  - place zero in last byte
-			//
-			int c = getchar();
-			if (c=='\n'){ /* at end, add terminating zero */
-				command[i] = 0;
-				break;
-			}
-			command[i] = c;
-			if (i == max - 1) { /* buffer full */
-				printf("Command is too long\n");
-				exit(1);
-			}
-			i++;
-		}
-		char * cmd;
-		char * arg;
-		// In case user typed command with argument, split to command and argument
-		cmd = strtok (command," ,\n");
-		if (cmd != NULL){
-			arg = strtok (NULL, "\n");
-			}
+        char *pCommand; // function to execute
+        pCommand = strtok(userCmd, " ");
 
-		if (strcmp(command,"q")==0){
-			printf("Number of executed commands is..%i\n",cmd_counter);
-			fclose(fileDesc);
-			exit(0);
-		}
-		if (strcmp(command,"initfs")==0){
-			printf("Init file_system was requested: %s\n",filename);
-			char *  p    = strtok (arg, " ");
-			long int nBlocks = atoi(p);
-			p = strtok (NULL, " ");
-			int nInodes = atoi(p);
-			if (nBlocks>4194304){
-				printf("\nFailed. Too many blocks requested, maximum is 4194304. Please try again.....\n");
-				}
-			else{
-				status = InitializeFS(nBlocks,nInodes,fileDesc);
-				if (status ==0)
-					printf("\nFile system successfully initialized\n");
+        // if pCommand is InitFS initilize file system
+        if (strcmp(pCommand, "initfs") == 0) {
+            char *pFilePath = strtok(NULL, " ");
+            char *pnBlocks = strtok(NULL, " ");
+            char *pnInode = strtok(NULL, " ");
+            long nBlocks = atoi(pnBlocks);
+            int nInodes = atoi(pnInode);
+
+            if (nBlocks > 4194304) {// max allowed file size: 4GB
+                printf("\nFAILED! Max allowed number of blocks: 4194304\n");
+                exit(0);
+            }
+
+            // check if the file exists
+            if (access(pFilePath, F_OK) != -1) { // if exists
+                printf("\nFile System already exists %s.", pFilePath);
+                fileDesc = open(pFilePath, O_RDWR);
+                if (fileDesc == -1) {
+                    printf("\nERROR: Unable to open file system.");
+                    exit(0);
+                } else {
+                    // Load super block
+                    lseek(fileDesc, BLOCK_SIZE, SEEK_SET);
+                    read(fileDesc, &superBlock, BLOCK_SIZE); // Note: sizeof(superBlock) <= BLOCK_SIZE
+                    fsStatus = 0;
+                    printf("\nOpened. Continue.\n");
+                }
+            } else { // file doesn't exist
+                fileDesc = open(pFilePath, O_CREAT | O_RDWR, S_IWUSR | S_IRUSR);
+                if (fileDesc == -1) {
+                    printf("\nERROR: Not sufficient file descriptors.\n");
+                    exit(0);
+                } else {
+                    printf("\nCreating new file system at %s .\n", pFilePath);
+					fileDesc = fopen(pFilePath, "r+");
+                    // if less than 4GB: INITIALIZE file system
+                    fsStatus = InitializeFS(nBlocks, nInodes);
+                    if (fsStatus == 0)
+                        printf("\nFile system initialization SUCCESSFUL!\n");
+                    else
+                        printf("\nFile system initialization FAILED!\n");
+                }
+            }
+        }
+            // if pCommand is cpin initilize file system
+        else if (strcmp(pCommand, "cpin") == 0) {
+            if (fsStatus != 0)
+                printf("Error! Launch (initfs) first to open/create file system\n");
+            else {
+                char *pExtFile = strtok(NULL, " ");
+                char *pFSFile = strtok(NULL, " ");
+
+                if (strlen(pFSFile) > 14) {
+                    printf("Target file name %s is TOO LONG: %i, maximum allowed length: 14", pFSFile, strlen(pFSFile));
+                    continue;
+                } else {
+                    fsStatus = CopyIN(pExtFile, pFSFile);
+                    if (fsStatus == 0)
+                        printf("\nSUCCESS! File imported\n");
+                    else
+                        printf("\nFAILED! can't import file\n");
+                }
+            }
+
+        } else if (strcmp(pCommand, "cpout") == 0) {
+            if (fsStatus != 0)
+                printf("Error! Launch (initfs) first to open/create file system\n");
+            else {
+                char *pFSFile = strtok(NULL, " ");
+                char *pExtFile = strtok(NULL, " ");
+
+				fsStatus = CopyOUT(pFSFile, pExtFile);
+				if (fsStatus == 0)
+					printf("\nSUCCESS! File exported\n");
 				else
-					printf("\nFile system initialization failed\n");
-				}
-		}
+					printf("\nFAILED! Can't export file\n");
+            }
+        } else if (strcmp(pCommand, "mkdir") == 0) {
+            if (fsStatus != 0)
+                printf("Error! Launch (initfs) first to open/create file system\n");
+            else {
+                char *pDir = strtok(NULL, " ");
+                fsStatus = MakeDirectory(pDir);
+				if (fsStatus == 0)
+					printf("\nSUCCESS! Make directory\n");
+				else
+					printf("\nFAILED! Can't make directory\n");
 
-		else if (strcmp(command,"cpin")==0){
-			printf("cpin was requested\n");
-			char *  p    = strtok (arg, " ");
-			const char *extFile = p;
-			p = strtok (NULL, " ");
-			const char *fsFile = p;
-			if (strlen(fsFile)>14){
-				printf("Target file name  %s is too long:%i, maximum length is 14",fsFile,strlen(fsFile));
-				status=1;
-				}
-			else
-				status = CopyIN(extFile,fsFile,fileDesc);
-			if (status ==0)
-				printf("\nFile  successfully copied\n");
-			else
-				printf("\nFile copy failed\n");
+            }
+        }  else if (strcmp(pCommand, "rm") == 0) {
+                char *pFile = strtok(NULL, " ");
+                fsStatus = Remove(pFile);
+				if (fsStatus == 0)
+					printf("\nSUCCESS! Remove\n");
+				else
+					printf("\nFAILED! Can't remove file\n");
 
-		}
-
-		else if (strcmp(command,"cpout")==0){
-			char *  p    = strtok (arg, " ");
-			const char *fsFile = p;
-			p = strtok (NULL, " ");
-			const char *extFile = p;
-			status = CopyOUT(fsFile,extFile,fileDesc);
-			if (status ==0)
-				printf("\nFile %s successfully copied\n",fsFile);
-			else
-				printf("\nFile copy failed\n");
-		}
-
-		else if (strcmp(command,"Rm")==0){
-			printf("Rm was requested\n");
-			char *  p    = strtok (arg, " ");
-			const char *filename = p;
-			status = Rm(filename,fileDesc);
-			if (status ==0)
-				printf("\nFile  successfully removed\n");
-			else
-				printf("\nFile removal failed\n");
-		}
-
-		else if (strcmp(command,"mkdir")==0){
-			printf("mkdir was requested\n");
-			char *  p    = strtok (arg, " ");
-			const char *dirName = p;
-			status = MakeDirectory(dirName,fileDesc);
-			if (status ==0)
-				printf("\nDirectory %s successfully created\n",dirName);
-			else
-				printf("\nDirectory creation failed\n");
-		}
-
-		else
-			printf("Not valid command. Available commands: initfs, cpin, cpout, Rm, q, mkdir. Please try again\n");
-
-	}
+        } else
+            printf("FAILED: Invalid Command. Accepted commands: initfs, cpin, cpout, mkdir, rm and q.\n");
+    }
 }
 
-int InitializeFS(int nBlocks, int nInodes, FILE* fileDesc)
+int InitializeFS(int nBlocks, int nInodes)
 {
 
 	long i = 0;
 
-    // SUPER-BLOCK: max size 1024
-    SuperBlock superBlock;
 
 	rewind(fileDesc);
 	// TEST ONLY: fill blocks with 0s to confirm size
@@ -330,7 +316,7 @@ int InitializeFS(int nBlocks, int nInodes, FILE* fileDesc)
 
 	// Initialize free blocks
 	for (next_free_block=0;next_free_block<nBlocks; next_free_block++ ){
-			AddFreeBlock(next_free_block, fileDesc);
+			AddFreeBlock(next_free_block);
 	}
 
 	//Initialize free i-node list
@@ -379,12 +365,12 @@ int InitializeFS(int nBlocks, int nInodes, FILE* fileDesc)
 	//Point first inode to file directory
 	printf("\nDirectory in the block %i",allocBlock);
 	rootInode.addr[0]=allocBlock; // Allocate block to file directory
-	write_inode(1,rootInode,fileDesc);
+	UpdateInode(1,rootInode);
 
 	return 0;
 }
 
-int CopyIN(const char* extFile,const char* fsFile,FILE* fileDesc){
+int CopyIN(const char* extFile,const char* fsFile){
 	printf("\nInside cpin, copy from %s to %s \n",extFile, fsFile);
 	INode iNode;
 	int newblocknum;
@@ -392,8 +378,8 @@ int CopyIN(const char* extFile,const char* fsFile,FILE* fileDesc){
 	FILE* srcfd;
 	unsigned char reader[BLOCK_SIZE];
 
-	int file_node_num = get_inode_by_file_name(fsFile,fileDesc);
-	if (file_node_num !=-1){
+	int fileInodeNum = GetFileInode(fsFile);
+	if (fileInodeNum !=-1){
 		printf("\nFile %s already exists. Choose different name",fsFile);
 		return -1;
 	}
@@ -424,10 +410,10 @@ int CopyIN(const char* extFile,const char* fsFile,FILE* fileDesc){
 		return 0;
 	}
 	//Add file name to directory
-	int to_file_inode_num = add_file_to_dir(fsFile,fileDesc);
+	int inodeNumber = AddFileToDirectory(fsFile);
 	//Initialize and load inode of new file
-	iNode = init_file_inode(to_file_inode_num,file_size, fileDesc);
-	write_inode(to_file_inode_num, iNode, fileDesc);
+	iNode = InitInode(inodeNumber,file_size);
+	UpdateInode(inodeNumber, iNode);
 
 	//Copy content of extFile into to_file_name
 	int num_blocks_read=1;
@@ -438,16 +424,16 @@ int CopyIN(const char* extFile,const char* fsFile,FILE* fileDesc){
 			// Read one block at a time from source file
 			num_blocks_read = fread(&reader,BLOCK_SIZE,1,srcfd);
 			total_num_blocks+= num_blocks_read;
-			newblocknum = get_free_block(fileDesc);
+			newblocknum = GetFreeBlock();
 
 			if (newblocknum == -1){
 				printf("\nNo free blocks left. Total blocks read so far:%i",total_num_blocks);
 				return -1;
 			}
 			if (file_size > BLOCK_SIZE*23)
-				add_block_to_inode(block_order,newblocknum, to_file_inode_num, fileDesc);
+				AddBlockToInodeLarge(block_order,newblocknum, inodeNumber);
 			else
-				add_block_to_inode_small_file(block_order,newblocknum, to_file_inode_num, fileDesc);
+				AddBlockToInodeSmall(block_order,newblocknum, inodeNumber);
 			// Write one block at a time into target file
 			fseek(fileDesc, newblocknum*BLOCK_SIZE, SEEK_SET);
 			fwrite(&reader, sizeof(reader), 1, fileDesc);
@@ -456,10 +442,10 @@ int CopyIN(const char* extFile,const char* fsFile,FILE* fileDesc){
 	return 0;
 }
 
-int CopyOUT(const char* fsFile,const char* extFile,FILE* fileDesc){
-	int file_node_num;
-	file_node_num = get_inode_by_file_name(fsFile,fileDesc);
-	if (file_node_num ==-1){
+int CopyOUT(const char* fsFile,const char* extFile){
+	int fileInodeNum;
+	fileInodeNum = GetFileInode(fsFile);
+	if (fileInodeNum ==-1){
 		printf("\nFile %s not found",fsFile);
 		return -1;
 	}
@@ -468,7 +454,7 @@ int CopyOUT(const char* fsFile,const char* extFile,FILE* fileDesc){
 	int next_block_number, block_number_order, number_of_blocks,file_size;
 	write_to_file = fopen(extFile,"w");
 	block_number_order=0;
-	file_size = get_inode_file_size(file_node_num, fileDesc);
+	file_size = GetFileSize(fileInodeNum);
 
 	printf("\nFile size %i",file_size);
 	int number_of_bytes_last_block = file_size%BLOCK_SIZE;
@@ -481,9 +467,9 @@ int CopyOUT(const char* fsFile,const char* extFile,FILE* fileDesc){
 
 	while(block_number_order < number_of_blocks){
 		if (file_size > BLOCK_SIZE*23)
-			next_block_number = get_block_for_big_file(file_node_num,block_number_order,fileDesc);
+			next_block_number = GetBlockLarge(fileInodeNum,block_number_order);
 		else
-			next_block_number = get_block_for_small_file(file_node_num,block_number_order,fileDesc);
+			next_block_number = GetBlockSmall(fileInodeNum,block_number_order);
 
 		if(next_block_number == 0)
 			return 0;
@@ -504,41 +490,41 @@ int CopyOUT(const char* fsFile,const char* extFile,FILE* fileDesc){
 	return 0;
 }
 
-int MakeDirectory(const char* dirName,FILE* fileDesc){
+int MakeDirectory(const char* dirName){
 	INode directory_inode, free_node;
 	FileName fileName;
-	int to_file_inode_num, flag, file_node_num;
+	int inodeNumber, flag, fileInodeNum;
 
-	file_node_num = get_inode_by_file_name(dirName,fileDesc);
-	if (file_node_num !=-1){
+	fileInodeNum = GetFileInode(dirName);
+	if (fileInodeNum !=-1){
 		printf("\nDirectory %s already exists. Choose different name",dirName);
 		return -1;
 	}
 
 	int found = 0;
-	to_file_inode_num=1;
+	inodeNumber=1;
 	while(found==0){
-		to_file_inode_num++;
-		free_node = read_inode(to_file_inode_num,fileDesc);
+		inodeNumber++;
+		free_node = GetInodeData(inodeNumber);
 		flag = MID(free_node.flags,15,16);
 		if (flag == 0){
 			found = 1;
 		}
 	}
 
-	directory_inode = read_inode(1,fileDesc);
+	directory_inode = GetInodeData(1);
 
 	// Move to the end of directory file
 	printf("\nDirectory node block number is %i",directory_inode.addr[0]);
 	fseek(fileDesc,(BLOCK_SIZE*directory_inode.addr[0]+directory_inode.size1),SEEK_SET);
 	// Add record to file directory
-	fileName.inodeOffset = to_file_inode_num;
+	fileName.inodeOffset = inodeNumber;
 	strcpy(fileName.fileName, dirName);
 	fwrite(&fileName,16,1,fileDesc);
 
 	//Update Directory file inode to increment size by one record
 	directory_inode.size1+=16;
-	write_inode(1,directory_inode,fileDesc);
+	UpdateInode(1,directory_inode);
 
 	//Initialize new directory file-node
 	free_node.flags=0;       //Initialize
@@ -546,26 +532,26 @@ int MakeDirectory(const char* dirName,FILE* fileDesc){
 	free_node.flags |=1 <<14; // Set 2-3 bits to 10 - i-node is directory
 	free_node.flags |=0 <<13;
 
-	write_inode(to_file_inode_num, free_node, fileDesc);
+	UpdateInode(inodeNumber, free_node);
 
 	return 0;
 }
 
-int Rm(const char* filename,FILE* fileDesc){
+int Remove(const char* filename){
 	printf("\nInside Rm, remove file %s",filename);
-	int file_node_num, file_size, block_number_order, next_block_number,i;
+	int fileInodeNum, file_size, block_number_order, next_block_number,i;
 	INode file_inode;
 	unsigned char bit_14; //Plain file or Directory bit
-	file_node_num = get_inode_by_file_name(filename,fileDesc);
-	if (file_node_num ==-1){
+	fileInodeNum = GetFileInode(filename);
+	if (fileInodeNum ==-1){
 		printf("\nFile %s not found",filename);
 		return -1;
 	}
-	file_inode = read_inode(file_node_num, fileDesc);
+	file_inode = GetInodeData(fileInodeNum);
 	bit_14 = MID(file_inode.flags,14,15);
 	if (bit_14 == 0){ //Plain file
 		printf("\nRemove Plain file");
-		file_size = get_inode_file_size(file_node_num, fileDesc);
+		file_size = GetFileSize(fileInodeNum);
 		block_number_order = file_size/BLOCK_SIZE;
 		if (file_size%BLOCK_SIZE !=0)
 				block_number_order++;  //Take care of truncation of integer devision
@@ -573,19 +559,19 @@ int Rm(const char* filename,FILE* fileDesc){
 		block_number_order--; //Order starts from zero
 		while(block_number_order>0){
 			if (file_size > BLOCK_SIZE*23)
-				next_block_number = get_block_for_big_file(file_node_num,block_number_order,fileDesc);
+				next_block_number = GetBlockLarge(fileInodeNum,block_number_order);
 			else
 				next_block_number = file_inode.addr[block_number_order];
 
-			add_block_to_free_list(next_block_number, fileDesc);
+			AddFreeBlock(next_block_number);
 			block_number_order--;
 		}
 	}
 	file_inode.flags=0; //Initialize inode flag and make it unallocated
 	for (i = 0;i<23;i++)
 		file_inode.addr[i] = 0;
-	write_inode(file_node_num, file_inode, fileDesc);
-	remove_file_from_directory(file_node_num, fileDesc);
+	UpdateInode(fileInodeNum, file_inode);
+	RemoveFileFromDirectory(fileInodeNum);
 	fflush(fileDesc);
 	return 0;
 }
@@ -593,8 +579,7 @@ int Rm(const char* filename,FILE* fileDesc){
 //***************************************************************************
 // AddFreeBlock: Adds a free block and update the super-block accordingly
 //***************************************************************************
-void AddFreeBlock(int blockNumber, FILE* fileDesc){
-	SuperBlock superBlock;
+void AddFreeBlock(int blockNumber){
 	FreeBlock copyToBlock;
 
 	// read and update existing superblock
@@ -605,7 +590,7 @@ void AddFreeBlock(int blockNumber, FILE* fileDesc){
 	// copy content of superblock to new block and point to it
 	if (superBlock.nfree == 250){
 		copyToBlock.nfree=250;
-		copy_int_array(superBlock.free, copyToBlock.free, 250);
+		CopyFreeArray(superBlock.free, copyToBlock.free, 250);
 		lseek(fileDesc,blockNumber*BLOCK_SIZE,SEEK_SET);
 		write(fileDesc,&copyToBlock,sizeof(copyToBlock));
 		superBlock.nfree = 1;
@@ -621,20 +606,20 @@ void AddFreeBlock(int blockNumber, FILE* fileDesc){
 	fwrite(&superBlock,sizeof(superBlock),1,fileDesc);
 }
 
-void copy_int_array(unsigned short *from_array, unsigned short *to_array, int buf_len){
+void CopyFreeArray(unsigned short *from_array, unsigned short *to_array, int buf_len){
 	int i;
 	for (i=0;i<buf_len;i++){
 		to_array[i] = from_array[i];
 	}
 }
 
-void add_block_to_inode(int block_order_num, int blockNumber, int to_file_inode_num, FILE* fileDesc){  //Assume large file
+void AddBlockToInodeLarge(int block_order_num, int blockNumber, int inodeNumber){  //Assume large file
 	INode file_inode;
 	unsigned short block_num_tow = blockNumber;
 	unsigned short sec_in;
 	unsigned short third_in;
 	unsigned short first_in;
-	file_inode = read_inode(to_file_inode_num, fileDesc);
+	file_inode = GetInodeData(inodeNumber);
 
 
 	int logical_block = (block_order_num-22)/512;
@@ -647,18 +632,18 @@ void add_block_to_inode(int block_order_num, int blockNumber, int to_file_inode_
 	}
 	else{
 		if(block_order_num == 22 && word_in_block2 == 0){
-			third_in = get_free_block(fileDesc);
+			third_in = GetFreeBlock();
 			file_inode.addr[block_order_num] = third_in;
 		}
 		if(prev_block2 < logical_block2){
-			sec_in = get_free_block(fileDesc);
+			sec_in = GetFreeBlock();
 			fseek(fileDesc, file_inode.addr[22]*BLOCK_SIZE+(logical_block2)*2, SEEK_SET);
 			fwrite(&sec_in,sizeof(sec_in),1,fileDesc);
 			fflush(fileDesc);
 		}
 
 		if(prev_block < logical_block){
-			first_in = get_free_block(fileDesc);
+			first_in = GetFreeBlock();
 
 			fseek(fileDesc, file_inode.addr[22]*BLOCK_SIZE+(logical_block2)*2, SEEK_SET);
 			fread(&sec_in,sizeof(sec_in),1,fileDesc);
@@ -675,22 +660,21 @@ void add_block_to_inode(int block_order_num, int blockNumber, int to_file_inode_
 
 		}
 
-	write_inode(to_file_inode_num, file_inode, fileDesc);
+	UpdateInode(inodeNumber, file_inode);
 
 }
 
-void add_block_to_inode_small_file(int block_order_num, int blockNumber, int to_file_inode_num, FILE* fileDesc){
+void AddBlockToInodeSmall(int block_order_num, int blockNumber, int inodeNumber){
 	//Assume small file
 	INode file_inode;
 	unsigned short block_num_tow = blockNumber;
-	file_inode = read_inode(to_file_inode_num, fileDesc);
+	file_inode = GetInodeData(inodeNumber);
 	file_inode.addr[block_order_num] = block_num_tow;
-	write_inode(to_file_inode_num, file_inode, fileDesc);
+	UpdateInode(inodeNumber, file_inode);
 	return;
 }
 
-int get_free_block(FILE* fileDesc){
-	SuperBlock superBlock;
+int GetFreeBlock(){
 	FreeBlock copy_from_block;
 	int free_block;
 
@@ -711,7 +695,7 @@ int get_free_block(FILE* fileDesc){
 		fseek(fileDesc, BLOCK_SIZE*superBlock.free[superBlock.nfree], SEEK_SET);
 		fread(&copy_from_block,sizeof(copy_from_block),1,fileDesc);
 		superBlock.nfree = copy_from_block.nfree;
-		copy_int_array(copy_from_block.free, superBlock.free, 250);
+		CopyFreeArray(copy_from_block.free, superBlock.free, 250);
 		superBlock.nfree--;
 		free_block = superBlock.free[superBlock.nfree];
 	}
@@ -722,65 +706,40 @@ int get_free_block(FILE* fileDesc){
 	return free_block;
 }
 
-void add_block_to_free_list(int freed_block_number, FILE* fileDesc){
-	SuperBlock superBlock;
-	FreeBlock copyToBlock;
 
-	fseek(fileDesc, BLOCK_SIZE, SEEK_SET);
-	fread(&superBlock,sizeof(superBlock),1,fileDesc);
-
-	if (superBlock.nfree < 250){
-		superBlock.free[superBlock.nfree] = freed_block_number;
-		superBlock.nfree++;
-	}
-	else{
-		copy_int_array(superBlock.free, copyToBlock.free, 250);
-		copyToBlock.nfree = 250;
-		fseek(fileDesc, BLOCK_SIZE*freed_block_number, SEEK_SET);
-		fwrite(&copyToBlock,sizeof(copyToBlock),1,fileDesc);
-		superBlock.nfree =1;
-		superBlock.free[0] = freed_block_number;
-		}
-	fseek(fileDesc, BLOCK_SIZE, SEEK_SET);
-	fwrite(&superBlock,sizeof(superBlock),1,fileDesc);
-	fflush(fileDesc);
-
-	return;
-}
-
-int add_file_to_dir(const char* fsFile,FILE* fileDesc){
+int AddFileToDirectory(const char* fsFile){
 	INode directory_inode, free_node;
 	FileName fileName;
-	int to_file_inode_num, flag;
+	int inodeNumber, flag;
 	int found = 0;
-	to_file_inode_num=1;
+	inodeNumber=1;
 	while(found==0){
-		to_file_inode_num++;
-		free_node = read_inode(to_file_inode_num,fileDesc);
+		inodeNumber++;
+		free_node = GetInodeData(inodeNumber);
 		flag = MID(free_node.flags,15,16);
 		if (flag == 0){
 			found = 1;
 		}
 	}
 
-	directory_inode = read_inode(1,fileDesc);
+	directory_inode = GetInodeData(1);
 
 	// Move to the end of directory file
 	fseek(fileDesc,(BLOCK_SIZE*directory_inode.addr[0]+directory_inode.size1),SEEK_SET);
 	// Add record to file directory
-	fileName.inodeOffset = to_file_inode_num;
+	fileName.inodeOffset = inodeNumber;
 	strcpy(fileName.fileName, fsFile);
 	fwrite(&fileName,16,1,fileDesc);
 
 	//Update Directory file inode to increment size by one record
 	directory_inode.size1+=16;
-	write_inode(1,directory_inode,fileDesc);
+	UpdateInode(1,directory_inode);
 
-	return to_file_inode_num;
+	return inodeNumber;
 
 }
 
-INode init_file_inode(int to_file_inode_num, unsigned int file_size, FILE* fileDesc){
+INode InitInode(int inodeNumber, unsigned int file_size){
 	INode to_file_inode;
 	unsigned short bit0_15;
 	unsigned char bit16_23;
@@ -822,27 +781,27 @@ INode init_file_inode(int to_file_inode_num, unsigned int file_size, FILE* fileD
 	return to_file_inode;
 }
 
-INode read_inode(int to_file_inode_num, FILE* fileDesc){
+INode GetInodeData(int inodeNumber){
 	INode to_file_inode;
-	fseek(fileDesc,(BLOCK_SIZE*2+inode_size*(to_file_inode_num-1)),SEEK_SET); //move to the beginning of inode number to_file_inode_num
+	fseek(fileDesc,(BLOCK_SIZE*2+inode_size*(inodeNumber-1)),SEEK_SET); //move to the beginning of inode number inodeNumber
 	fread(&to_file_inode,inode_size,1,fileDesc);
 	return to_file_inode;
 }
 
-int write_inode(int inode_num, INode inode, FILE* fileDesc){
+int UpdateInode(int inode_num, INode inode){
 	fseek(fileDesc,(BLOCK_SIZE*2+inode_size*(inode_num-1)),SEEK_SET); //move to the beginning of inode with inode_num
 	fwrite(&inode,inode_size,1,fileDesc);
 	return 0;
 }
 
 
-unsigned short get_block_for_big_file(int file_node_num,int block_number_order, FILE* fileDesc){
+unsigned short GetBlockLarge(int fileInodeNum,int block_number_order){
 	INode file_inode;
 	unsigned short block_num_tow;
 	unsigned short sec_ind_block;
 	unsigned short third_ind_block;
 
-	file_inode = read_inode(file_node_num,fileDesc);
+	file_inode = GetInodeData(fileInodeNum);
     int logical_block = (block_number_order-22)/512;
 	int logical_block2 = logical_block/512;
 	int word_in_block = (block_number_order-22) % (512*512);
@@ -867,13 +826,13 @@ unsigned short get_block_for_big_file(int file_node_num,int block_number_order, 
 
 }
 
-unsigned short get_block_for_small_file(int file_node_num,int block_number_order, FILE* fileDesc){
+unsigned short GetBlockSmall(int fileInodeNum,int block_number_order){
 	INode file_inode;
-	file_inode = read_inode(file_node_num,fileDesc);
+	file_inode = GetInodeData(fileInodeNum);
 	return (file_inode.addr[block_number_order]);
 }
 
-unsigned int get_inode_file_size(int to_file_inode_num, FILE* fileDesc){
+unsigned int GetFileSize(int inodeNumber){
 	INode to_file_inode;
 	unsigned int file_size;
 
@@ -881,7 +840,7 @@ unsigned int get_inode_file_size(int to_file_inode_num, FILE* fileDesc){
 	unsigned char bit16_23;
 	unsigned short bit24;
 
-	to_file_inode = read_inode(to_file_inode_num, fileDesc);
+	to_file_inode = GetInodeData(inodeNumber);
 
 	bit24 = LAST(to_file_inode.flags,1);
 	bit16_23 = to_file_inode.size0;
@@ -891,11 +850,11 @@ unsigned int get_inode_file_size(int to_file_inode_num, FILE* fileDesc){
 	return file_size;
 }
 
-int get_inode_by_file_name(const char* filename,FILE* fileDesc){
+int GetFileInode(const char* filename){
 	INode directory_inode;
 	FileName fileName;
 
-	directory_inode = read_inode(1,fileDesc);
+	directory_inode = GetInodeData(1);
 
 	// Move to the end of directory file
 	fseek(fileDesc,(BLOCK_SIZE*directory_inode.addr[0]),SEEK_SET);
@@ -915,11 +874,11 @@ int get_inode_by_file_name(const char* filename,FILE* fileDesc){
 	return -1;
 }
 
-void remove_file_from_directory(int file_node_num, FILE*  fileDesc){
+void RemoveFileFromDirectory(int fileInodeNum){
 	INode directory_inode;
 	FileName fileName;
 
-	directory_inode = read_inode(1,fileDesc);
+	directory_inode = GetInodeData(1);
 
 	// Move to the beginning of directory file (3rd record)
 	fseek(fileDesc,(BLOCK_SIZE*directory_inode.addr[0]),SEEK_SET); //Move to third record in directory
@@ -929,7 +888,7 @@ void remove_file_from_directory(int file_node_num, FILE*  fileDesc){
 
 	for(i=0;i<records; i++){
 
-		if (fileName.inodeOffset == file_node_num){
+		if (fileName.inodeOffset == fileInodeNum){
 			printf("File found! removing from the directory.");
 			fseek(fileDesc, (-1)*sizeof(fileName), SEEK_CUR); //Go one record back
 			fileName.inodeOffset = 0;
